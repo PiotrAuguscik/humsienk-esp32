@@ -1,0 +1,12 @@
+.pio/
+build*/
+__pycache__/
+*.pyc
+secrets*
+token
+*.pem
+.env
+.env.*
+*.key
+credentials*
+.DS_Store

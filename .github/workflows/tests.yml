@@ -1,0 +1,23 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/run.sh
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+  esp32c3:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [ReadBattery, SavedBattery]
+    env:
+      PLATFORMIO_SRC_DIR: examples/${{ matrix.example }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install platformio==6.1.19
+      - run: pio run -e esp32c3
