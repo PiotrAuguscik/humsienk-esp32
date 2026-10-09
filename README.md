@@ -168,7 +168,7 @@ objects remain unchanged on error: **never treat an old snapshot as a new read**
 The protocol has no transaction sequence number; duplicate replies within one
 healthy session cannot be perfectly distinguished. Errors force a new session.
 
-One `battery()` singleton owns NimBLE and the scan/client for its lifetime.
+One `battery()` singleton owns its battery client for the process lifetime.
 Call it from one application task, never a BLE callback; calls are blocking.
 Connect timeout is 10 s, response wait is 10 s, and requests are spaced by 1 s.
 NimBLE service discovery/ATT calls additionally use the stack's timeouts; this
@@ -181,6 +181,28 @@ transport, but that integration needs separate testing.
 The library does not manage Wi-Fi. When Wi-Fi is active, modem sleep must be
 enabled before `begin()`; otherwise it returns `Busy`. Another BLE stack owning
 the controller can also cause `Busy`.
+
+### Sharing Bluetooth with other devices
+
+Use `beginShared()` when your application owns an existing **NimBLE** runtime:
+
+```cpp
+#include <NimBLEDevice.h>
+#include <humsienk/esp32.h>
+
+// Once, in setup; enable Wi-Fi modem sleep first if Wi-Fi is running.
+NimBLEDevice::init("my-controller");
+NimBLEDevice::setMTU(512);  // application policy; optional for this battery
+const auto error = humsienk::battery().beginShared();
+```
+
+Then use the same discovery, connection and read methods. `beginShared()` never
+initializes, reconfigures or stops the shared Bluetooth stack. Disconnecting the
+battery closes only its client. Do not deinitialize NimBLE while any client is
+in use. The application coordinates scans, radio policy and polling; serialize
+calls to this library on one task. Other devices need their own NimBLE clients
+and sufficient stack connection capacity. No other device library is required.
+Use regular `begin()` for a standalone application that has not initialized BLE.
 
 ## Tests
 

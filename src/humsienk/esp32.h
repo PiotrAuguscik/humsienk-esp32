@@ -2,11 +2,14 @@
 #include "humsienk.h"
 #if defined(ARDUINO_ARCH_ESP32)
 namespace humsienk {
-// One process-lifetime NimBLE owner. Do not combine with Bluedroid or another
-// BLE owner. Call from one application task, never from a BLE callback.
+// One process-lifetime battery client. Call from one application task, never
+// from a BLE callback. Does not disconnect other NimBLE clients.
 class Esp32Battery {
  public:
   Error begin();
+  // Attach to an application-initialized NimBLE runtime. Does not initialize,
+  // configure or deinitialize the shared controller. Call before discover().
+  Error beginShared();
   Error discover(Candidate* out, std::size_t capacity, std::size_t& count,
                  std::uint32_t scanMs = 10000);
   Error connect(const Target& target);

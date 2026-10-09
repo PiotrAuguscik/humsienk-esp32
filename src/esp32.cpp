@@ -14,10 +14,12 @@ namespace {
 struct Chunk { std::size_t size; std::uint8_t bytes[kMaxFrame]; };
 class BleTransport final : public Transport {
  public:
-  Error begin() {
+  Error begin(bool shared = false) {
     if (initialized_) return Error::Ok;
-    if (attempted_ || NimBLEDevice::isInitialized() ||
-        esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_IDLE) return Error::Busy;
+    if (attempted_) return Error::Busy;
+    if (shared ? !NimBLEDevice::isInitialized() :
+        (NimBLEDevice::isInitialized() ||
+         esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_IDLE)) return Error::Busy;
     // IDF4 radio coexistence can abort when modem sleep is disabled. Policy
     // belongs to the application: refuse instead of changing its Wi-Fi.
     wifi_mode_t mode=WIFI_MODE_NULL;
@@ -25,13 +27,16 @@ class BleTransport final : public Transport {
     if (status!=ESP_OK && status!=ESP_ERR_WIFI_NOT_INIT) return Error::Transport;
     if (status==ESP_OK && mode!=WIFI_MODE_NULL) {
       wifi_ps_type_t ps=WIFI_PS_NONE;
-      if (esp_wifi_get_ps(&ps)!=ESP_OK || ps==WIFI_PS_NONE) return Error::Busy;
+      if (esp_wifi_get_ps(&ps)!=ESP_OK ||
+          (ps!=WIFI_PS_MIN_MODEM && ps!=WIFI_PS_MAX_MODEM)) return Error::Busy;
     }
     attempted_=true;
     queue_=xQueueCreate(8,sizeof(Chunk));
     if (!queue_) return Error::Overflow;
-    if (!NimBLEDevice::init("humsienk-esp32")) return Error::Transport;
-    NimBLEDevice::setMTU(247);
+    if (!shared) {
+      if (!NimBLEDevice::init("humsienk-esp32")) return Error::Transport;
+      NimBLEDevice::setMTU(247);
+    }
     client_=NimBLEDevice::createClient();
     if (!client_) return Error::Transport;
     client_->setConnectTimeout(10000);
@@ -42,6 +47,7 @@ class BleTransport final : public Transport {
     if (!validTarget(t)) return Error::InvalidArgument;
     if (connected() || NimBLEDevice::getScan()->isScanning()) return Error::Busy;
     accepting_=false; clearNotifications(); rx_=tx_=auth_=nullptr;
+    const auto epoch=++epoch_;
     // Some HS04 peripherals initiate MTU negotiation themselves. NimBLE 2.x's
     // early automatic exchange can then fail with BLE_HS_EALREADY and discard
     // an otherwise usable connection. Keep fresh GATT discovery and synchronous
@@ -60,9 +66,9 @@ class BleTransport final : public Transport {
         !auth_->canWrite() || !auth_->canRead()) {
       close(); return Error::WrongResponse;
     }
-    if (!rx_->subscribe(true,[this](NimBLERemoteCharacteristic*, std::uint8_t* data,
+    if (!rx_->subscribe(true,[this,epoch](NimBLERemoteCharacteristic*, std::uint8_t* data,
                                    std::size_t size, bool) {
-      if (!accepting_.load()) return;
+      if (!accepting_.load() || epoch!=epoch_.load()) return;
       if (size>kMaxFrame) { overflow_=true; return; }
       Chunk chunk{}; chunk.size=size; std::memcpy(chunk.bytes,data,size);
       if (xQueueSend(queue_,&chunk,0)!=pdTRUE) overflow_=true;
@@ -111,12 +117,14 @@ class BleTransport final : public Transport {
   NimBLERemoteCharacteristic *rx_=nullptr, *tx_=nullptr, *auth_=nullptr;
   QueueHandle_t queue_=nullptr;
   std::atomic<bool> overflow_{false}, accepting_{false};
+  std::atomic<std::uint32_t> epoch_{0};
 };
 BleTransport& transport() { static BleTransport t; return t; }
 Session& session() { static Session s(transport()); return s; }
 }
 Esp32Battery& battery() { static Esp32Battery b; return b; }
 Error Esp32Battery::begin() { return transport().begin(); }
+Error Esp32Battery::beginShared() { return transport().begin(true); }
 Error Esp32Battery::connect(const Target& t) { return session().connect(t); }
 void Esp32Battery::disconnect() { session().disconnect(); }
 bool Esp32Battery::connected() const { return session().connected(); }
